@@ -2,7 +2,7 @@ import argparse
 import scipy.sparse as sp
 import numpy as np
 import torch
-import ipdb
+import pdb
 from scipy.io import loadmat
 import networkx as nx
 import multiprocessing as mp
@@ -334,29 +334,32 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
     adj_new = None
 
     for i in range(im_class_num):
-        chosen = idx_train[(labels==(c_largest-i))[idx_train]]
-        num = int(chosen.shape[0]*portion)
+        # samples of the current class
+        idx_curr_class = idx_train[(labels==(c_largest-i))[idx_train]]
+        # determine # of samples to be used for new interpolated samples
+        num = int(idx_curr_class.shape[0]*portion)
         if portion == 0:
-            c_portion = int(avg_number/chosen.shape[0])
-            num = chosen.shape[0]
+            c_portion = int(avg_number/idx_curr_class.shape[0])
+            num = idx_curr_class.shape[0]
         else:
             c_portion = 1
 
         for j in range(c_portion):
-            chosen = chosen[:num]
+            # samples of current class for interpolation
+            idx_curr_class_interp = idx_curr_class[:num]
 
-            chosen_embed = embed[chosen,:]
+            chosen_embed = embed[idx_curr_class_interp,:]
             distance = squareform(pdist(chosen_embed.detach()))
             np.fill_diagonal(distance,distance.max()+100)
 
             idx_neighbor = distance.argmin(axis=-1)
             
             interp_place = random.random()
-            new_embed = embed[chosen,:] + (chosen_embed[idx_neighbor,:]-embed[chosen,:])*interp_place
+            new_embed = embed[idx_curr_class_interp,:] + (chosen_embed[idx_neighbor,:]-embed[idx_curr_class_interp,:])*interp_place
 
 
-            new_labels = labels.new(torch.Size((chosen.shape[0],1))).reshape(-1).fill_(c_largest-i)
-            idx_new = np.arange(embed.shape[0], embed.shape[0]+chosen.shape[0])
+            new_labels = labels.new(torch.Size((idx_curr_class_interp.shape[0],1))).reshape(-1).fill_(c_largest-i)
+            idx_new = np.arange(embed.shape[0], embed.shape[0]+idx_curr_class_interp.shape[0])
             idx_train_append = idx_train.new(idx_new)
 
             embed = torch.cat((embed,new_embed), 0)
@@ -365,9 +368,9 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
 
             if adj is not None:
                 if adj_new is None:
-                    adj_new = adj.new(torch.clamp_(adj[chosen,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
+                    adj_new = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
                 else:
-                    temp = adj.new(torch.clamp_(adj[chosen,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
+                    temp = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
                     adj_new = torch.cat((adj_new, temp), 0)
 
     if adj is not None:
