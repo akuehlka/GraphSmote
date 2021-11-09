@@ -333,11 +333,50 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
     #ipdb.set_trace()
     adj_new = None
 
+    # helper function
+    def upsample_embeddings(embed, idx_curr_class_interp, take_from_other_classes=False):
+        if take_from_other_classes:
+            # there's no other samples in this class, so we'll find the closest sample to interpolate
+
+            # samples of the OTHER classes
+            idx_other_class = idx_train[(labels!=(c_largest-i))[idx_train]]
+            chosen_embed = torch.cat(
+                (
+                    embed[idx_other_class],
+                    embed[idx_curr_class_interp],
+                ),
+                dim=0
+            )
+            distance = squareform(pdist(chosen_embed.detach()))
+            np.fill_diagonal(distance,distance.max()+100)
+            # we're interested only in the distance to the positive sample
+            idx_neighbor = distance[-1].argmin(axis=-1)
+            # absolute index of the closest neighbor
+            idx_neighbor_abs = idx_other_class[idx_neighbor]
+        else:
+            chosen_embed = embed[idx_curr_class_interp]
+            distance = squareform(pdist(chosen_embed.detach()))
+            np.fill_diagonal(distance,distance.max()+100)
+            idx_neighbor = distance.argmin(axis=-1)
+            # absolute index of the closest neighbor
+            idx_neighbor_abs = idx_curr_class_interp[idx_neighbor]
+
+        interp_place = random.random()
+        return embed[idx_curr_class_interp,:] + (chosen_embed[idx_neighbor,:]-embed[idx_curr_class_interp,:])*interp_place, idx_neighbor_abs
+
+    # start upsampling
     for i in range(im_class_num):
         # samples of the current class
         idx_curr_class = idx_train[(labels==(c_largest-i))[idx_train]]
         # determine # of samples to be used for new interpolated samples
         num = int(idx_curr_class.shape[0]*portion)
+        
+        take_from_other_classes = False
+        if idx_curr_class.shape[0]==1:
+            # if there's only 1 sample, we have to do things differently
+            take_from_other_classes = True
+            num = 1
+
         if portion == 0:
             c_portion = int(avg_number/idx_curr_class.shape[0])
             num = idx_curr_class.shape[0]
@@ -348,15 +387,7 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
             # samples of current class for interpolation
             idx_curr_class_interp = idx_curr_class[:num]
 
-            chosen_embed = embed[idx_curr_class_interp,:]
-            distance = squareform(pdist(chosen_embed.detach()))
-            np.fill_diagonal(distance,distance.max()+100)
-
-            idx_neighbor = distance.argmin(axis=-1)
-            
-            interp_place = random.random()
-            new_embed = embed[idx_curr_class_interp,:] + (chosen_embed[idx_neighbor,:]-embed[idx_curr_class_interp,:])*interp_place
-
+            new_embed, idx_neighbor_abs = upsample_embeddings(embed, idx_curr_class_interp, take_from_other_classes=take_from_other_classes)
 
             new_labels = labels.new(torch.Size((idx_curr_class_interp.shape[0],1))).reshape(-1).fill_(c_largest-i)
             idx_new = np.arange(embed.shape[0], embed.shape[0]+idx_curr_class_interp.shape[0])
@@ -368,9 +399,9 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
 
             if adj is not None:
                 if adj_new is None:
-                    adj_new = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
+                    adj_new = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor_abs,:], min=0.0, max = 1.0))
                 else:
-                    temp = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor,:], min=0.0, max = 1.0))
+                    temp = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor_abs,:], min=0.0, max = 1.0))
                     adj_new = torch.cat((adj_new, temp), 0)
 
     if adj is not None:
