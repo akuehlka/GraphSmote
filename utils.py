@@ -398,6 +398,8 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
             idx_train = torch.cat((idx_train,idx_train_append), 0)
 
             if adj is not None:
+                # connections from the original nodes, plus connections of the neighbor will be added to the new nodes
+                # TODO: introduce "edge dropout" ?
                 if adj_new is None:
                     adj_new = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor_abs,:], min=0.0, max = 1.0))
                 else:
