@@ -2,6 +2,7 @@ import argparse
 import scipy.sparse as sp
 import numpy as np
 import torch
+import math
 import pdb
 from scipy.io import loadmat
 import networkx as nx
@@ -340,23 +341,21 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
 
             # samples of the OTHER classes
             idx_other_class = idx_train[(labels!=(c_largest-i))[idx_train]]
-            chosen_embed = torch.cat(
-                (
+            chosen_embed = torch.cat((
                     embed[idx_other_class],
                     embed[idx_curr_class_interp],
-                ),
-                dim=0
+                ), dim=0
             )
-            distance = squareform(pdist(chosen_embed.detach()))
-            np.fill_diagonal(distance,distance.max()+100)
+            distance = to_square(torch.nn.functional.pdist(chosen_embed.detach()))
+            distance.fill_diagonal_(distance.max()+100)
             # we're interested only in the distance to the positive sample
             idx_neighbor = distance[-1].argmin(axis=-1)
             # absolute index of the closest neighbor
             idx_neighbor_abs = idx_other_class[idx_neighbor]
         else:
             chosen_embed = embed[idx_curr_class_interp]
-            distance = squareform(pdist(chosen_embed.detach()))
-            np.fill_diagonal(distance,distance.max()+100)
+            distance = to_square(torch.nn.functional.pdist(chosen_embed.detach()))
+            distance.fill_diagonal_(distance.max()+100)
             idx_neighbor = distance.argmin(axis=-1)
             # absolute index of the closest neighbor
             idx_neighbor_abs = idx_curr_class_interp[idx_neighbor]
@@ -432,5 +431,32 @@ def adj_mse_loss(adj_rec, adj_tgt, adj_mask = None):
     return loss
 
 
+def to_square(a):
+    '''
+    Makeshift equivalent to scipy's squareform
+    '''
+
+    s = list(a.shape)
+    assert len(s)==1,"Argument is not a distance vector."
+
+    # from scipy's squareform:
+    # Grab the closest value to the square root of the number
+    # of elements times 2 to see if the number of elements
+    # is indeed a binomial coefficient.
+    d = int(math.ceil(math.sqrt(s[0] * 2)))
+
+    # Check that v is of valid dimensions.
+    if d * (d - 1) != s[0] * 2:
+        raise ValueError('Incompatible vector size. It must be a binomial '
+                            'coefficient n choose 2 for some integer n >= 2.')
+
+    b = torch.zeros((d,d), dtype=a.dtype)
+    p2=d-1
+    p1=0
+    for i in range(d):
+        b[i,i+1:] = a[p1:p1+p2]
+        p1+=p2
+        p2-=1
+    return b + b.T
 
 
