@@ -421,7 +421,7 @@ def adj_mse_loss(adj_rec, adj_tgt, adj_mask = None):
     edge_num = adj_tgt.nonzero().shape[0]
     total_num = adj_tgt.shape[0]**2
 
-    neg_weight = edge_num / (total_num-edge_num)
+    neg_weight = edge_num / ((total_num-edge_num)+ 1e-9)
 
     weight_matrix = adj_rec.new(adj_tgt.shape).fill_(1.0)
     weight_matrix[adj_tgt==0] = neg_weight
