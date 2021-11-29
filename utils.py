@@ -353,12 +353,16 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
             # absolute index of the closest neighbor
             idx_neighbor_abs = idx_other_class[idx_neighbor]
         else:
-            chosen_embed = embed[idx_curr_class_interp]
-            distance = to_square(torch.nn.functional.pdist(chosen_embed.detach()))
-            distance.fill_diagonal_(distance.max()+100)
-            idx_neighbor = distance.argmin(axis=-1)
-            # absolute index of the closest neighbor
-            idx_neighbor_abs = idx_curr_class_interp[idx_neighbor]
+            if len(idx_curr_class_interp)>0:
+                chosen_embed = embed[idx_curr_class_interp]
+                distance = to_square(torch.nn.functional.pdist(chosen_embed.detach()))
+                distance.fill_diagonal_(distance.max()+100)
+                idx_neighbor = distance.argmin(axis=-1)
+                # absolute index of the closest neighbor
+                idx_neighbor_abs = idx_curr_class_interp[idx_neighbor]
+            else:
+                # we can't interpolate because there's no sample of the target class in this batch
+                return embed[idx_curr_class_interp,:], []
 
         interp_place = random.random()
         return embed[idx_curr_class_interp,:] + (chosen_embed[idx_neighbor,:]-embed[idx_curr_class_interp,:])*interp_place, idx_neighbor_abs
