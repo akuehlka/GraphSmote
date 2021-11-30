@@ -13,6 +13,7 @@ import random
 from sklearn.metrics import roc_auc_score, f1_score
 from copy import deepcopy
 from scipy.spatial.distance import pdist,squareform
+from torch_sparse import SparseTensor, coalesce
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -329,6 +330,22 @@ def src_smote(adj,features,labels,idx_train, portion=1.0, im_class_num=3):
     return adj, features, labels, idx_train
 
 def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num=3):
+    '''
+    Perform upsampling on a batch of embeddings
+    Parameters:
+    embed (Tensor): M x N tensor with M samples and N features
+    labels (Tensor): 1D tensor with M integer labels
+    idx_train (Tensor): 1D tensor with an indexed list of samples in the training set
+    adj (SparseTensor): 2D M X M tensor with adjacencies
+    portion (float): 
+    im_class_num (int): imbalanced class label
+    Returns:
+    new_embed (Tensor): embeddings tensor with original and augmented nodes
+    labels (Tensor): labels for original and augmented nodes
+    idx_train (Tensor): Indexed list of samples in the training set (including augmented nodes)
+    new_adj (SparseTensor): New adjacency matrix (with edges for augmented nodes.)
+    '''
+
     c_largest = labels.max().item()
     avg_number = int(idx_train.shape[0]/(c_largest+1))
     #ipdb.set_trace()
@@ -402,21 +419,13 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
 
             if adj is not None:
                 # connections from the original nodes, plus connections of the neighbor will be added to the new nodes
-                # TODO: introduce "edge dropout" ?
                 if adj_new is None:
-                    adj_new = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor_abs,:], min=0.0, max = 1.0))
+                    adj_new = combine_sparse_adj(adj, idx_curr_class_interp, idx_neighbor_abs)
                 else:
-                    temp = adj.new(torch.clamp_(adj[idx_curr_class_interp,:] + adj[idx_neighbor_abs,:], min=0.0, max = 1.0))
-                    adj_new = torch.cat((adj_new, temp), 0)
+                    adj_new = combine_sparse_adj(adj_new, idx_curr_class_interp, idx_neighbor_abs)
 
     if adj is not None:
-        add_num = adj_new.shape[0]
-        new_adj = adj.new(torch.Size((adj.shape[0]+add_num, adj.shape[0]+add_num))).fill_(0.0)
-        new_adj[:adj.shape[0], :adj.shape[0]] = adj[:,:]
-        new_adj[adj.shape[0]:, :adj.shape[0]] = adj_new[:,:]
-        new_adj[:adj.shape[0], adj.shape[0]:] = torch.transpose(adj_new, 0, 1)[:,:]
-
-        return embed, labels, idx_train, new_adj.detach()
+        return embed, labels, idx_train, adj_new.detach()
 
     else:
         return embed, labels, idx_train
@@ -464,3 +473,86 @@ def to_square(a):
     return b + b.T
 
 
+# based on https://github.com/rusty1s/pytorch_sparse/issues/113
+def add_sparse(a, b, clamp=True, preserve_size=True):
+    # assert a.sizes() == b.sizes(), "The Tensor dimensions do not match"
+    row_a, col_a, values_a = a.coo()
+    row_b, col_b, values_b = b.coo()
+    
+    index = torch.stack([torch.cat([row_a, row_b]), torch.cat([col_a, col_b])])
+    value = torch.cat([values_a, values_b])
+    
+    if not preserve_size:
+        m,n = a.sizes()
+    else:
+        # we're only interested in square adj matrices
+        m = n = index.max().item()+1
+    index, value = coalesce(index, value, m=m, n=n)
+    if clamp:
+        value = torch.clamp(value, 0, 1)
+    res = SparseTensor.from_edge_index(index, value, sparse_sizes=(m, n))
+    return res
+
+
+def combine_sparse_adj(adj, subset1, subset2):
+    """
+    Combines the adjacencies of two subsets of nodes (specifically, the original nodes selected to interpolate, and their closest neighbor nodes).
+    The combined adjacencies are appended back (as rows/cols) to the original adjacency matrix.
+    Arguments:
+    adj (SparseTensor): sparse adjacency matrix
+    subset1 (Tensor): list of indices (rows in adj) belonging to the 1st subset
+    subset2 (Tensor): list of indices (rows in adj) belonging to the 2nd subset
+    Returns: 
+    mod_adj (SparseTensor): a modified adjacency matrix combining adjacencies of subset1 and subset2
+
+    Example - Combine rows 0 and 2 of SparseTensor x, appending them back as additional rows and cols:
+
+    a = torch.tensor([[0, 1, 2],[2, 1, 0]], dtype=torch.long)
+    b = torch.ones((3), dtype=torch.long)
+    x = SparseTensor.from_edge_index(
+        edge_index=a,
+        edge_attr=b
+    )
+    print(x.to_dense())
+    =>
+    tensor([[0, 0, 1],
+            [0, 1, 0],
+            [1, 0, 0]])
+
+    combine_sparse_adj(x, 0, 2).to_dense()
+    =>
+    tensor([[0, 0, 1, 1],
+            [0, 1, 0, 0],
+            [1, 0, 0, 1],
+            [1, 0, 1, 0]])
+
+    """
+    offset_rows, offset_cols = adj.sparse_sizes()
+    
+    combined = add_sparse(adj[subset1,:], adj[subset2,:], preserve_size=False)
+    rows_to_add = combined.sizes()[0]
+
+    # shift rows 
+    r, c, v = combined.coo()
+    r = r + offset_rows
+    
+    newadj = SparseTensor.from_edge_index(
+        edge_index=torch.stack((r, c), 0),
+        edge_attr=v,
+        sparse_sizes=[s+rows_to_add for s in adj.sizes()]
+    )
+
+    # shift cols
+    r, c, v = combined.t().coo()
+    c = c + offset_cols
+
+    combined_t = SparseTensor.from_edge_index(
+        edge_index=torch.stack((r,c), 0),
+        edge_attr=v,
+        sparse_sizes=[s+rows_to_add for s in adj.sizes()]
+    )
+
+    newadj = add_sparse(newadj, combined_t)
+    newadj = add_sparse(newadj, adj)
+
+    return newadj
