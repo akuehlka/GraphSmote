@@ -556,3 +556,48 @@ def combine_sparse_adj(adj, subset1, subset2):
     newadj = add_sparse(newadj, adj)
 
     return newadj
+
+def threshold_sparse(s, threshold=0.5):
+    '''
+    Applies a threshold to each value in a sparse matrix. Returns a new SparseTensor
+    filled with either 1.0s or 0.0s.
+    Arguments:
+    s (SparseTensor): 
+    threshold (float):
+    Returns:
+    (SparseTensor)
+    '''
+    r, c, v = s.coo()
+    v = torch.where(v>=threshold, 1.0, 0.0)
+    return SparseTensor.from_edge_index(
+        torch.stack((r,c),0), v, s.sparse_sizes()
+    )
+
+def assign_sparse_sub(adj, sub):
+    '''
+    Assign values of a tensor sub into a fragment of adj, overwriting adj with sub values
+    Arguments:
+    adj (SparseTensor): the main tensor (usually the larger)
+    sub (SparseTensor): the tensor to be pasted onto adj (usually the smaller)
+    Returns:
+    (SparseTensor): with the shape of adj
+    '''
+    adj_r, adj_c, adj_v = adj.coo()
+    sub_r, sub_c, sub_v = sub.coo()
+
+    # remove from adj the elements that coincide with sub
+    mask = [False if (r in torch.arange(3) and c in torch.arange(3)) else True for r, c in zip(adj_r, adj_c)]
+    newadj_r = adj_r[mask]
+    newadj_c = adj_c[mask]
+    newadj_v = adj_v[mask]
+
+    # append to adj the elements in sub
+    newadj_r = torch.cat((newadj_r, sub_r), 0)
+    newadj_c = torch.cat((newadj_c, sub_c), 0)
+    newadj_v = torch.cat((newadj_v, sub_v), 0)
+
+    return SparseTensor.from_edge_index(
+        torch.stack([newadj_r, newadj_c], 0),
+        newadj_v, 
+        adj.sizes()
+    )
