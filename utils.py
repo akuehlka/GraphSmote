@@ -382,6 +382,11 @@ def recon_upsample(embed, labels, idx_train, adj=None, portion=1.0, im_class_num
                 return embed[idx_curr_class_interp,:], []
 
         interp_place = random.random()
+
+        # if idx_neighbor_abs is a scalar, make it a vector
+        if idx_neighbor_abs.ndim==0:
+            idx_neighbor_abs = torch.tensor([idx_neighbor_abs])
+
         return embed[idx_curr_class_interp,:] + (chosen_embed[idx_neighbor,:]-embed[idx_curr_class_interp,:])*interp_place, idx_neighbor_abs
 
     # start upsampling
