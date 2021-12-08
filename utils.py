@@ -490,12 +490,23 @@ def add_sparse(a, b, clamp=True, preserve_size=True):
     if not preserve_size:
         m,n = a.sizes()
     else:
-        # we're only interested in square adj matrices
-        m = n = index.max().item()+1
+        # we're only interested in square adj matrices so m==n
+        if index.nelement()>0:
+            m = n = index.max().item()+1
+        else:
+            maxsizes, _ = torch.max(torch.stack([torch.tensor(a.sizes()), torch.tensor(b.sizes())]), dim=0)
+            m = maxsizes[0].item()
+            n = maxsizes[1].item()
     index, value = coalesce(index, value, m=m, n=n)
     if clamp:
         value = torch.clamp(value, 0, 1)
-    res = SparseTensor.from_edge_index(index, value, sparse_sizes=(m, n))
+    
+    if index.nelement()==0:
+        # avoid error w empty matrices
+        # could lead to problems if m and n  are large
+        res = SparseTensor.from_dense(torch.zeros((m,n)))
+    else:
+        res = SparseTensor.from_edge_index(index, value, sparse_sizes=(m, n))
     return res
 
 
@@ -591,7 +602,8 @@ def assign_sparse_sub(adj, sub):
     sub_r, sub_c, sub_v = sub.coo()
 
     # remove from adj the elements that coincide with sub
-    mask = [False if (r in torch.arange(3) and c in torch.arange(3)) else True for r, c in zip(adj_r, adj_c)]
+    # TODO: this is highly inefficient
+    mask = [False if (r in torch.arange(3).type_as(adj_r) and c in torch.arange(3).type_as(adj_r)) else True for r, c in zip(adj_r, adj_c)]
     newadj_r = adj_r[mask]
     newadj_c = adj_c[mask]
     newadj_v = adj_v[mask]
