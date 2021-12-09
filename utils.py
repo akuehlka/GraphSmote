@@ -109,7 +109,7 @@ def split_genuine(labels):
         if c_num <4:
             if c_num < 3:
                 print("too small class type")
-                ipdb.set_trace()
+                # ipdb.set_trace()
             c_num_mat[i,0] = 1
             c_num_mat[i,1] = 1
             c_num_mat[i,2] = 1
@@ -571,7 +571,7 @@ def combine_sparse_adj(adj, subset1, subset2):
     newadj = add_sparse(newadj, combined_t)
     newadj = add_sparse(newadj, adj)
 
-    return newadj
+    return newadj.device_as(adj.to_dense())
 
 def threshold_sparse(s, threshold=0.5):
     '''
@@ -586,17 +586,17 @@ def threshold_sparse(s, threshold=0.5):
     r, c, v = s.coo()
     v = torch.where(v>=threshold, 1.0, 0.0)
     return SparseTensor.from_edge_index(
-        torch.stack((r,c),0), v, s.sparse_sizes()
-    )
+        torch.stack((r,c),0), v, s.sparse_sizes(), 
+    ).device_as(s.to_dense())
 
 def assign_sparse_sub(adj, sub):
     '''
     Assign values of a tensor sub into a fragment of adj, overwriting adj with sub values
     Arguments:
-    adj (SparseTensor): the main tensor (usually the larger)
-    sub (SparseTensor): the tensor to be pasted onto adj (usually the smaller)
+        adj (SparseTensor): the main tensor (usually the larger)
+        sub (SparseTensor): the tensor to be pasted onto adj (usually the smaller)
     Returns:
-    (SparseTensor): with the shape of adj
+        (SparseTensor): with the shape of adj
     '''
     adj_r, adj_c, adj_v = adj.coo()
     sub_r, sub_c, sub_v = sub.coo()
@@ -618,3 +618,65 @@ def assign_sparse_sub(adj, sub):
         newadj_v, 
         adj.sizes()
     )
+
+def append_sparse_adj(adj, row=None, col=None, mirror=False):
+    '''
+    Append a row and/or column adjacency to the matrix.
+    Arguments:
+        adj (SparseTensor): sparse tensor to be appended
+        row (SparseTensor): (optional) row to append
+        rol (sparseTensor): (optional) col to append
+        mirror (bool): use input row/col transposed
+    Returns:
+        (SparseTensor): with appended rows/cols
+    '''
+    a = row is not None
+    b = col is not None
+    assert a or b, "Either row or col must be provided"
+    if mirror:
+        assert (a ^ b), "Only row XOR col must be provided for mirroring"
+
+    adj_r, adj_c, adj_v = adj.coo()
+    max_r, max_c = adj.sizes()
+
+    output_rows, output_cols = adj.sizes()
+
+    if row is None and mirror:
+        row = col.t()
+
+    if row is None:
+        row_r = torch.tensor([0])
+        row_c = torch.tensor([0])
+        row_v = torch.tensor([0])
+        output_rows += col.sizes()[1]
+    else:
+        row_r, row_c, row_v = row.coo()
+        output_rows += row.sizes()[0]
+    adj_r = torch.cat((adj_r, row_r + max_r))
+    adj_c = torch.cat((adj_c, row_c))
+    adj_v = torch.cat((adj_v, row_v))
+        
+    if col is None and mirror:
+        col = row.t()
+
+    if col is None:
+        col_r = torch.tensor([0])
+        col_c = torch.tensor([0])
+        col_v = torch.tensor([0])
+        output_cols += row.sizes()[0]
+    else:
+        col_r, col_c, col_v = col.coo()
+        output_cols += col.sizes()[1]
+    adj_r = torch.cat((adj_r, col_r))
+    adj_c = torch.cat((adj_c, col_c + max_c))
+    adj_v = torch.cat((adj_v, col_v))
+
+    ss = [output_rows, output_cols]
+
+    adj = SparseTensor.from_edge_index(
+        torch.stack([adj_r, adj_c],0), 
+        adj_v, 
+        sparse_sizes=ss
+    ).device_as(adj.to_dense())
+
+    return adj
