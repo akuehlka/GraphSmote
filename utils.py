@@ -484,6 +484,9 @@ def add_sparse(a, b, clamp=True, preserve_size=True):
     row_a, col_a, values_a = a.coo()
     row_b, col_b, values_b = b.coo()
     
+    if values_b is None:
+        values_b = torch.ones_like(col_b).long()
+
     index = torch.stack([torch.cat([row_a, row_b]), torch.cat([col_a, col_b])])
     value = torch.cat([values_a, values_b])
     
@@ -635,6 +638,11 @@ def append_sparse_adj(adj, row=None, col=None, mirror=False):
     assert a or b, "Either row or col must be provided"
     if mirror:
         assert (a ^ b), "Only row XOR col must be provided for mirroring"
+
+    if adj is None:
+        assert a, "When adj is None, row must be provided"
+        s = row.sizes()[1]
+        adj = SparseTensor.from_dense(torch.zeros(s, s))
 
     adj_r, adj_c, adj_v = adj.coo()
     max_r, max_c = adj.sizes()
