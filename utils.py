@@ -484,6 +484,8 @@ def add_sparse(a, b, clamp=True, preserve_size=True):
     row_a, col_a, values_a = a.coo()
     row_b, col_b, values_b = b.coo()
     
+    if values_a is None:
+        values_a = torch.zeros_like(col_a).long()
     if values_b is None:
         values_b = torch.ones_like(col_b).long()
 
@@ -571,10 +573,10 @@ def combine_sparse_adj(adj, subset1, subset2):
         sparse_sizes=[s+rows_to_add for s in adj.sizes()]
     )
 
-    newadj = add_sparse(newadj, combined_t)
+    newadj = add_sparse(newadj, combined_t).device_as(adj.storage.row())
     newadj = add_sparse(newadj, adj)
 
-    return newadj.device_as(adj.to_dense())
+    return newadj.device_as(adj.storage.row())
 
 def threshold_sparse(s, threshold=0.5):
     '''
@@ -590,7 +592,7 @@ def threshold_sparse(s, threshold=0.5):
     v = torch.where(v>=threshold, 1.0, 0.0)
     return SparseTensor.from_edge_index(
         torch.stack((r,c),0), v, s.sparse_sizes(), 
-    ).device_as(s.to_dense())
+    ).device_as(s.storage.row())
 
 def assign_sparse_sub(adj, sub):
     '''
